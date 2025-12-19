@@ -24,6 +24,8 @@ admissionregistration.k8s.io/v1
 # 安裝 KEDA
 kubectl apply --server-side -f https://github.com/kedacore/keda/releases/download/v2.18.2/keda-2.18.2.yaml
 
+# !!!! 注意此範例使用 workloadIdentity 進行授權給 keda-operator
+```bash
 export PROJECT_ID="gcp-poc-384805"
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format 'get(projectNumber)')
 
@@ -31,9 +33,10 @@ gcloud projects add-iam-policy-binding projects/${PROJECT_ID} \
      --role roles/monitoring.viewer \
      --member=principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/keda/sa/keda-operator
 
-(Ref) [使用 KEDA 將資源縮減為零](https://docs.cloud.google.com/kubernetes-engine/docs/tutorials/scale-to-zero-using-keda?hl=zh-tw#kubectl)
 
+(Ref) [使用 KEDA 將資源縮減為零](https://docs.cloud.google.com/kubernetes-engine/docs/tutorials/scale-to-zero-using-keda?hl=zh-tw#kubectl)
 ```
+
 ### 安裝完畢
 - namespace keda 下出現 3 個 deployment
 ![KEDA 安裝完成後的 Deployment 狀態](./source/keda_installed_deployment.png)
@@ -67,7 +70,7 @@ phpfpm_max_active_processes{pool="www",scrape_uri="unix:///run/php/php-fpm.sock;
 phpfpm_total_processes{pool="www",scrape_uri="unix:///run/php/php-fpm.sock;/fpm_status"} 10
 ```
 
-## Pub/Sub
+## Pub/Sub 授權給 keda-operator
 ```bash
 export PROJECT_ID="gcp-poc-384805"
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format 'get(projectNumber)')
