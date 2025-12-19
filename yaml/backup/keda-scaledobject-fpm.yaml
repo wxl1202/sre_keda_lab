@@ -1,0 +1,184 @@
+# AI生成
+#
+# KEDA ScaledObject 配置 - 基於 GMP 的 PHP-FPM 進程利用率自動擴展
+# 
+# 使用 KEDA 直接從 Google Managed Prometheus 查詢指標，無需 Prometheus Adapter
+#
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: php-fpm-scaledobject
+  namespace: default
+spec:
+  # 指定要自動擴展的目標部署
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment   # 請根據實際的 Deployment 名稱修改
+  
+  # Pod 數量的最小值
+  minReplicaCount: 2
+  
+  # Pod 數量的最大值
+  maxReplicaCount: 10
+  
+  # 冷卻期設定
+  cooldownPeriod: 300   # 縮容冷卻期：5 分鐘
+  pollingInterval: 30   # 輪詢間隔：30 秒
+  
+  # 擴展行為配置
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 60
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+          selectPolicy: Min
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+          - type: Pods
+            value: 4
+            periodSeconds: 30
+          selectPolicy: Max
+  
+  # 定義擴展觸發器
+  triggers:
+  # 使用 Prometheus 觸發器查詢 GMP
+  - type: prometheus
+    metadata:
+      # GMP 的外部查詢端點
+      # 需要使用 GCP 的身份驗證
+      serverAddress: https://monitoring.googleapis.com/v1/projects/gcp-poc-384805/location/global/prometheus
+      
+      # 使用 GCP 身份驗證（基於 Workload Identity）
+      authModes: "gcp"
+      
+      # 使用 rule.yaml 中定義的 recording rule
+      query: |
+        avg(
+          job:phpfpm_process_utilization:ratio{namespace="default"}
+        )
+      
+      # 閾值：當平均值超過 70 時觸發擴展
+      threshold: "70"
+      
+      # 當查詢沒有數據時，激活擴展（避免服務完全停止）
+      activationThreshold: "0"
+
+# ---
+# # 替代觸發器 1: 使用原始指標計算
+# apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+# metadata:
+#   name: php-fpm-scaledobject-raw
+#   namespace: default
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: nginx-php-fpm
+  
+#   minReplicaCount: 2
+#   maxReplicaCount: 10
+#   cooldownPeriod: 300
+#   pollingInterval: 30
+  
+#   triggers:
+#   # 直接使用原始指標進行計算
+#   - type: prometheus
+#     metadata:
+#       serverAddress: http://frontend.gmp-system.svc:9090
+      
+#       # 直接在查詢中計算進程利用率百分比
+#       query: |
+#         avg(
+#           (
+#             phpfpm_active_processes{namespace="default", pod=~"nginx-php-fpm.*"}
+#             /
+#             phpfpm_total_processes{namespace="default", pod=~"nginx-php-fpm.*"}
+#           ) * 100
+#         )
+      
+#       threshold: "70"
+#       activationThreshold: "0"
+
+# ---
+# # 替代觸發器 2: 基於請求隊列長度
+# apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+# metadata:
+#   name: php-fpm-scaledobject-queue
+#   namespace: default
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: nginx-php-fpm
+  
+#   minReplicaCount: 2
+#   maxReplicaCount: 10
+#   cooldownPeriod: 300
+#   pollingInterval: 30
+  
+#   triggers:
+#   # 基於 PHP-FPM 請求隊列長度擴展
+#   - type: prometheus
+#     metadata:
+#       serverAddress: http://frontend.gmp-system.svc:9090
+      
+#       # 監控請求隊列長度
+#       query: |
+#         avg(phpfpm_listen_queue{namespace="default"})
+      
+#       # 當隊列長度超過 5 時擴展
+#       threshold: "5"
+#       activationThreshold: "1"
+
+---
+# 注意事項：
+#
+# 1. 安裝 KEDA（如果尚未安裝）：
+#    helm repo add kedacore https://kedacore.github.io/charts
+#    helm repo update
+#    helm install keda kedacore/keda --namespace keda --create-namespace
+#
+# 2. 驗證 GMP frontend 服務：
+#    kubectl get svc -n gmp-system
+#    應該看到 frontend 服務在 gmp-system namespace
+#
+# 3. 如果使用 GCP 外部端點，需要配置身份驗證：
+#    metadata:
+#      serverAddress: https://monitoring.googleapis.com/v1/projects/PROJECT_ID/location/global/prometheus
+#      authModes: "gcp"
+#
+# 4. 選擇其中一個 ScaledObject 部署：
+#    - php-fpm-scaledobject: 使用 recording rule
+#    - php-fpm-scaledobject-raw: 直接計算原始指標
+#    - php-fpm-scaledobject-queue: 基於請求隊列
+#
+# 5. 部署命令：
+#    kubectl apply -f yaml/keda-scaledobject-fpm.yaml
+#
+# 6. 驗證 KEDA ScaledObject：
+#    kubectl get scaledobject
+#    kubectl describe scaledobject php-fpm-scaledobject
+#
+# 7. 查看 KEDA 創建的 HPA：
+#    kubectl get hpa
+#    kubectl describe hpa keda-hpa-php-fpm-scaledobject
+#
+# 8. KEDA 優勢：
+#    - 直接支援 Prometheus 查詢，無需額外的 Adapter
+#    - 支援多種觸發器類型（Kafka, RabbitMQ, HTTP 等）
+#    - 可以縮容到 0（如果設定 minReplicaCount: 0）
+#    - 更靈活的擴展配置

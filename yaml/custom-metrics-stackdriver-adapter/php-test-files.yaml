@@ -1,0 +1,60 @@
+# AI生成
+# 測試用 PHP 文件 ConfigMap
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: php-test-files
+  labels:
+    app: nginx
+data:
+  # PHP 資訊頁面
+  index.php: |
+    <?php
+    /**
+     * PHP 資訊頁面
+     * 用於測試 PHP-FPM 是否正常運作
+     */
+    phpinfo();
+    ?>
+  
+  # PHP-FPM 狀態測試頁面
+  test.php: |
+    <?php
+    /**
+     * PHP-FPM 連接測試頁面
+     * 顯示基本的 PHP 環境資訊
+     */
+    echo "<h1>PHP-FPM 運行正常</h1>";
+    echo "<p>PHP 版本: " . phpversion() . "</p>";
+    echo "<p>伺服器時間: " . date('Y-m-d H:i:s') . "</p>";
+    echo "<p>記憶體使用: " . round(memory_get_usage() / 1024 / 1024, 2) . " MB</p>";
+    
+    // 顯示一些環境變數
+    echo "<h2>環境資訊</h2>";
+    echo "<pre>";
+    echo "HOSTNAME: " . gethostname() . "\n";
+    echo "SERVER_SOFTWARE: " . $_SERVER['SERVER_SOFTWARE'] . "\n";
+    echo "DOCUMENT_ROOT: " . $_SERVER['DOCUMENT_ROOT'] . "\n";
+    echo "</pre>";
+    ?>
+  
+  # 健康檢查頁面
+  health.php: |
+    <?php
+    /**
+     * 健康檢查端點
+     * 返回 JSON 格式的健康狀態
+     */
+    header('Content-Type: application/json');
+    
+    $health = [
+        'status' => 'healthy',
+        'timestamp' => time(),
+        'php_version' => phpversion(),
+        'memory_usage' => memory_get_usage(),
+        'memory_peak' => memory_get_peak_usage()
+    ];
+    
+    echo json_encode($health, JSON_PRETTY_PRINT);
+    ?>

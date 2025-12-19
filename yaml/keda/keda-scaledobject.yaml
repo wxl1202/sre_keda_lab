@@ -1,0 +1,130 @@
+# AI生成
+apiVersion: keda.sh/v1alpha1
+kind: ClusterTriggerAuthentication
+metadata:
+  name: google-workload-identity-auth
+spec:
+  podIdentity:
+    provider: gcp
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: php-fpm-scaledobject
+  namespace: default # 替換為實際命名空間
+spec:
+  # KEDA 監控的目標 Deployment/StatefulSet 等
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment # 或 StatefulSet
+    name: nginx-deployment
+  
+  # 最小和最大的 Pod 副本數
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  
+  # 冷卻期設定（可選）
+  cooldownPeriod: 300  # 縮容冷卻期（秒）
+  pollingInterval: 15   # 檢查指標的間隔時間（秒）
+  
+  # 定義擴展觸發器
+  triggers:
+    # 觸發器 1: PHP-FPM 進程利用率（使用 Prometheus scaler 查詢 GMP）
+    - type: prometheus
+      metadata:
+        # GCP Monitoring Prometheus API 端點
+        serverAddress: https://monitoring.googleapis.com/v1/projects/gcp-poc-384805/location/global/prometheus
+        # Prometheus 查詢語句（GMP 使用特殊的標籤格式）
+        # 這裡的查詢計算過去 1m 內 PHP-FPM 進程利用率的平均值總和
+        # IMPORTANT: 轉換為 HPA 時 threshold 會將此數值變成 AverageValue 所以需要使用 sum() 包裹
+        query: |
+          sum(
+            avg_over_time(
+              job:phpfpm_process_utilization:ratio{namespace="default"}[1m]
+            )
+          )
+        threshold: "40"
+        activationThreshold: "30"
+        externalMetricName: php-fpm-process-utilization
+      authenticationRef:
+        kind: ClusterTriggerAuthentication
+        name: google-workload-identity-auth
+    
+    # 觸發器 2: CPU 使用率
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        # CPU 使用率閾值（百分比）
+        value: "40"
+        externalMetricName: cpu-utilization
+
+    # 觸發器 3: Pub/Sub subscription backlog（直接查 GMP / Cloud Monitoring 既有指標）
+    # 說明：
+    # - Pub/Sub 在 Cloud Monitoring 本來就有既有指標，例如：
+    #   pubsub.googleapis.com/subscription/num_undelivered_messages
+    # - 透過 Cloud Monitoring PromQL（KEDA 這裡的 serverAddress）可直接查詢，不需要額外 exporter。
+    # - 在 PromQL 中，Cloud Monitoring 的 metric type 通常會被正規化為底線命名：
+    #   pubsub_googleapis_com_subscription_num_undelivered_messages
+    #
+    # 重要：不同專案/環境回傳的 label key 可能略有差異。
+    # 建議先用「不加 label 過濾」的 query 查一次，從回傳結果觀察有哪些 labels，
+    # 再把 subscription 的 label（常見是 subscription_id）補上。
+    - type: prometheus
+      metadata:
+        # GCP Monitoring Prometheus API（同你現有觸發器 1）
+        serverAddress: https://monitoring.googleapis.com/v1/projects/gcp-poc-384805/location/global/prometheus
+        # backlog（未投遞訊息數）
+        #
+        # 為什麼要這樣寫（避免常拿到 0）：
+        # - Cloud Monitoring / GMP 的資料點通常有「匯入延遲」（ingestion lag），查「現在」可能會暫時看不到最新點。
+        # - 指標取樣頻率常見是 60s 等級，而 KEDA pollingInterval 可能更短，導致你在兩個資料點之間查詢，
+        #   max_over_time 視窗太短時容易取到 0 或空值（KEDA 常會當 0）。
+        #
+        # 對策：
+        # - 將 range 視窗加大到 5m（涵蓋更多資料點）
+        # - 加 offset 2m（刻意避開最新 1~2 分鐘的延遲區間）
+        #
+        # 可依環境調整：
+        # - 若仍常 0：把 [5m] 加到 [10m]，或把 offset 2m 加到 3m
+        # - 若希望更即時：把 offset 減小，但要接受偶發 0/空值的可能
+        query: |
+          sum(
+            max_over_time(
+              {"__name__"="pubsub.googleapis.com/subscription/num_undelivered_messages",
+              "monitored_resource"="pubsub_subscription",
+              "subscription_id"="keda-echo-read"}[5m] offset 2m
+            )
+          )
+        # threshold：backlog >= 此值時擴容（請依吞吐量調整）
+        #   threshold 代表單個 pod 的承載力，單個 pod 可處理的 backlog 數量，超過這個數值就開始擴容。
+        threshold: "5"
+        externalMetricName: pubsub-backlog
+        # activationThreshold：低於此值時不啟動 scaler（避免抖動）
+        # activationThreshold: "10"
+      authenticationRef:
+        kind: ClusterTriggerAuthentication
+        name: google-workload-identity-auth
+  
+  # 進階選項：擴展行為設定（可選）
+  advanced:
+    # HPA 行為設定
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # 縮容策略
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 60
+        scaleUp:
+          # 擴容策略
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+          - type: Pods
+            value: 4
+            periodSeconds: 30
+          selectPolicy: Max

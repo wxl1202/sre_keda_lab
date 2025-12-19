@@ -1,0 +1,105 @@
+# AI生成
+#
+# HPA 配置檔案 - 基於 PHP-FPM 進程利用率的自動擴展
+# 
+# 此 HPA 使用自定義指標 job:phpfpm_process_utilization:ratio 來監控
+# PHP-FPM 進程的使用率，並根據該指標自動調整 Pod 數量
+#
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php-fpm-hpa
+  namespace: default
+spec:
+  # 指定要自動擴展的目標部署
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment   # 請根據實際的 Deployment 名稱修改
+  
+  # Pod 數量的最小值
+  minReplicas: 2
+  
+  # Pod 數量的最大值
+  maxReplicas: 10
+  
+  # 定義擴展行為
+  behavior:
+    scaleDown:
+      # 縮容策略
+      stabilizationWindowSeconds: 300  # 穩定窗口期為 5 分鐘，避免頻繁縮容
+      policies:
+      - type: Percent
+        value: 50  # 每次最多縮減 50% 的 Pod
+        periodSeconds: 60  # 每 60 秒評估一次
+      - type: Pods
+        value: 2  # 每次最多縮減 2 個 Pod
+        periodSeconds: 60
+      selectPolicy: Min  # 選擇影響最小的策略
+    scaleUp:
+      # 擴容策略
+      stabilizationWindowSeconds: 0  # 不設穩定期，快速響應負載增加
+      policies:
+      - type: Percent
+        value: 100  # 每次最多增加 100% 的 Pod（即翻倍）
+        periodSeconds: 30  # 每 30 秒評估一次
+      - type: Pods
+        value: 4  # 每次最多增加 4 個 Pod
+        periodSeconds: 30
+      selectPolicy: Max  # 選擇最激進的擴容策略
+  
+  # 定義擴展指標
+  metrics:
+  # 使用自定義 Prometheus 指標
+  - type: Pods
+    pods:
+      metric:
+        # 使用 rule.yaml 中定義的 recording rule
+        # 該指標計算：(活躍進程數 / 總進程數) * 100
+        name: job:phpfpm_process_utilization:ratio
+      target:
+        type: AverageValue
+        # 目標值：當平均進程利用率超過 70% 時觸發擴展
+        averageValue: "70"
+  
+  # 可選：同時使用 CPU 指標作為備用
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        # 當 CPU 使用率超過 80% 時也會觸發擴展
+        averageUtilization: 80
+  
+  # 可選：同時使用記憶體指標
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        # 當記憶體使用率超過 80% 時也會觸發擴展
+        averageUtilization: 80
+
+---
+# 注意事項：
+#
+# 1. 確保已部署 Prometheus Adapter 以支援自定義指標
+#    參考：prometheus-adapter.yaml
+#
+# 2. 確保 Prometheus 已配置 recording rules
+#    參考：rule.yaml 或 prometheus-rules.yaml
+#
+# 3. 確保目標 Deployment 的名稱正確（scaleTargetRef.name）
+#
+# 4. 根據實際業務需求調整以下參數：
+#    - minReplicas / maxReplicas：Pod 數量範圍
+#    - averageValue: "70"：PHP-FPM 進程利用率閾值
+#    - stabilizationWindowSeconds：穩定窗口期
+#    - scaleUp/scaleDown policies：擴縮容速率
+#
+# 5. 驗證 HPA 狀態的命令：
+#    kubectl get hpa php-fpm-hpa
+#    kubectl describe hpa php-fpm-hpa
+#
+# 6. 查看自定義指標的命令：
+#    kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/default/pods/*/job:phpfpm_process_utilization:ratio" | jq .

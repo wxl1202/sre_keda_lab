@@ -1,0 +1,31 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php-fpm-hpa
+  namespace: default # 替換為實際命名空間
+spec:
+  # HPA 監控的目標 Deployment/StatefulSet 等
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment # 或 StatefulSet
+    name: nginx-deployment
+  # 最小和最大的 Pod 副本數
+  minReplicas: 2
+  maxReplicas: 10
+  # 定義擴展指標
+  metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: prometheus.googleapis.com|job:phpfpm_process_utilization:ratio|gauge
+      target:
+        type: AverageValue
+        averageValue: "0.7"
+  
+  # 指標 2: CPU 使用率（資源指標）
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 40

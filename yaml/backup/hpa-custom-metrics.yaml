@@ -1,0 +1,222 @@
+# AI生成
+# HorizontalPodAutoscaler 配置 - 基於 PHP-FPM 自定義指標
+---
+# HPA 方案 1: 基於進程利用率自動擴展
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-php-hpa-utilization
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  # 使用自定義指標：PHP-FPM 進程利用率
+  - type: Pods
+    pods:
+      metric:
+        name: phpfpm_active_processes_utilization
+      target:
+        type: AverageValue
+        # 目標利用率 70% (0.7)
+        averageValue: "700m"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max
+---
+# HPA 方案 2: 基於活躍進程數自動擴展
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-php-hpa-active-processes
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  # 使用自定義指標：PHP-FPM 活躍進程數
+  - type: Pods
+    pods:
+      metric:
+        name: phpfpm_active_processes
+      target:
+        type: AverageValue
+        # 當平均活躍進程數超過 12 時擴展
+        averageValue: "12"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+---
+# HPA 方案 3: 混合指標（進程利用率 + CPU）
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-php-hpa-mixed
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  # 指標 1: PHP-FPM 進程利用率
+  - type: Pods
+    pods:
+      metric:
+        name: phpfpm_active_processes_utilization
+      target:
+        type: AverageValue
+        averageValue: "700m"  # 70%
+  # 指標 2: CPU 使用率
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # 指標 3: 記憶體使用率
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+---
+# HPA 方案 4: 基於請求隊列長度
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-php-hpa-queue
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+  # 使用自定義指標：PHP-FPM 請求隊列
+  - type: Pods
+    pods:
+      metric:
+        name: phpfpm_listen_queue
+      target:
+        type: AverageValue
+        # 當隊列有積壓時立即擴展
+        averageValue: "1"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10分鐘穩定期
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 180
+    scaleUp:
+      stabilizationWindowSeconds: 0  # 立即擴展
+      policies:
+      - type: Pods
+        value: 3
+        periodSeconds: 15
+      selectPolicy: Max
+---
+# HPA 方案 5: 基於請求率（推薦用於生產）
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-php-hpa-request-rate
+  labels:
+    app: nginx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # 使用自定義指標：PHP-FPM 請求率
+  - type: Pods
+    pods:
+      metric:
+        name: phpfpm_request_rate
+      target:
+        type: AverageValue
+        # 當每個 Pod 的請求率超過 50 req/s 時擴展
+        averageValue: "50"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25  # 每次最多縮減 25%
+        periodSeconds: 60
+      - type: Pods
+        value: 2   # 或最多縮減 2 個 Pod
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100  # 每次最多擴展 100%
+        periodSeconds: 15
+      - type: Pods
+        value: 4    # 或最多擴展 4 個 Pod
+        periodSeconds: 15
+      selectPolicy: Max

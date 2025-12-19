@@ -1,0 +1,35 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php-fpm-hpa
+  namespace: default # 替換為實際命名空間
+spec:
+  # HPA 監控的目標 Deployment/StatefulSet 等
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment # 或 StatefulSet
+    name: nginx-deployment
+  # 最小和最大的 Pod 副本數
+  minReplicas: 2
+  maxReplicas: 10
+  # 定義擴展指標
+  metrics:
+  # 指標 1: PHP-FPM 進程利用率（外部指標）
+  - type: External # 使用外部指標類型
+    external:
+      # 這是 GCP Monitoring 中的指標名稱
+      metric:
+        name: prometheus.googleapis.com|job:phpfpm_process_utilization:ratio|gauge
+      # 定義目標值：當指標達到這個值時，HPA 會擴展
+      target:
+        type: AverageValue
+        # 設置目標利用率百分比（例如，當利用率達到 70% 時開始擴展）
+        averageValue: "70" # 這裡的值是 70 (表示 70%)
+  
+  # 指標 2: CPU 使用率（資源指標）
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 40

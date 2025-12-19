@@ -1,0 +1,291 @@
+# AI生成
+# Prometheus Adapter 配置 - 用於 HPA 自動擴展
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adapter-config
+  namespace: custom-metrics
+data:
+  config.yaml: |
+    rules:
+    # 規則 1: PHP-FPM 進程利用率（自定義指標）
+    - seriesQuery: 'phpfpm_active_processes{namespace!="",pod!=""}'
+      resources:
+        # 將 Prometheus 標籤映射到 K8s 資源
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        # 匹配原始指標名稱
+        matches: "phpfpm_active_processes"
+        # 轉換為新的指標名稱
+        as: "phpfpm_active_processes_utilization"
+      metricsQuery: |
+        avg(
+          phpfpm_active_processes{<<.LabelMatchers>>} 
+          / 
+          phpfpm_total_processes{<<.LabelMatchers>>}
+        ) by (<<.GroupBy>>)
+    
+    # 規則 2: PHP-FPM 活躍進程數（原始值）
+    - seriesQuery: 'phpfpm_active_processes{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^phpfpm_active_processes$"
+        as: "phpfpm_active_processes"
+      metricsQuery: 'avg(phpfpm_active_processes{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+    
+    # 規則 3: PHP-FPM 空閒進程數
+    - seriesQuery: 'phpfpm_idle_processes{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^phpfpm_idle_processes$"
+        as: "phpfpm_idle_processes"
+      metricsQuery: 'avg(phpfpm_idle_processes{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+    
+    # 規則 4: PHP-FPM 總進程數
+    - seriesQuery: 'phpfpm_total_processes{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^phpfpm_total_processes$"
+        as: "phpfpm_total_processes"
+      metricsQuery: 'avg(phpfpm_total_processes{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+    
+    # 規則 5: PHP-FPM 請求率（每秒請求數）
+    - seriesQuery: 'phpfpm_accepted_connections{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "phpfpm_accepted_connections"
+        as: "phpfpm_request_rate"
+      metricsQuery: 'rate(phpfpm_accepted_connections{<<.LabelMatchers>>}[5m])'
+    
+    # 規則 6: PHP-FPM 請求隊列長度
+    - seriesQuery: 'phpfpm_listen_queue{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^phpfpm_listen_queue$"
+        as: "phpfpm_listen_queue"
+      metricsQuery: 'avg(phpfpm_listen_queue{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+---
+# Prometheus Adapter Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+  labels:
+    app: custom-metrics-apiserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: custom-metrics-apiserver
+  template:
+    metadata:
+      labels:
+        app: custom-metrics-apiserver
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      serviceAccountName: custom-metrics-apiserver
+      containers:
+      - name: custom-metrics-apiserver
+        image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.11.2
+        args:
+        - --cert-dir=/var/run/serving-cert
+        - --config=/etc/adapter/config.yaml
+        - --logtostderr=true
+        - --metrics-relist-interval=1m
+        - --prometheus-url=http://prometheus.monitoring.svc:9090
+        - --secure-port=6443
+        - --tls-cipher-suites=TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,TLS_RSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_CBC_SHA,TLS_RSA_WITH_AES_256_CBC_SHA
+        ports:
+        - containerPort: 6443
+          name: https
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: temp-vol
+          mountPath: /tmp
+        - name: config
+          mountPath: /etc/adapter
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+      volumes:
+      - name: temp-vol
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: adapter-config
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+spec:
+  ports:
+  - name: https
+    port: 443
+    targetPort: 6443
+  - name: http
+    port: 80
+    targetPort: 8080
+  selector:
+    app: custom-metrics-apiserver
+---
+# APIService
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  service:
+    name: custom-metrics-apiserver
+    namespace: custom-metrics
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+# ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-server-resources
+rules:
+- apiGroups:
+  - custom.metrics.k8s.io
+  resources: ["*"]
+  verbs: ["*"]
+---
+# ClusterRole for reading metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-resource-reader
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics:system:auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: custom-metrics-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+# ClusterRoleBinding for resource reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics-resource-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-resource-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+# ClusterRoleBinding for HPA
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hpa-controller-custom-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-server-resources
+subjects:
+- kind: ServiceAccount
+  name: horizontal-pod-autoscaler
+  namespace: kube-system

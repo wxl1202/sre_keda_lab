@@ -1,0 +1,170 @@
+# AI生成
+# PHP-FPM 告警規則 - 用於 Google Managed Prometheus
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: php-fpm-alerts
+  labels:
+    app: nginx
+    app.kubernetes.io/name: php-fpm-alerts
+spec:
+  groups:
+  - name: php-fpm-health
+    interval: 30s
+    rules:
+    # 1. 活躍進程數過高告警
+    - alert: PhpFpmHighActiveProcesses
+      expr: phpfpm_active_processes > 15
+      for: 5m
+      labels:
+        severity: warning
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM active processes is high"
+        description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has {{ $value }} active processes (threshold: 15)"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-high-processes"
+    
+    # 2. 空閒進程數過低告警
+    - alert: PhpFpmLowIdleProcesses
+      expr: phpfpm_idle_processes < 2
+      for: 5m
+      labels:
+        severity: warning
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM idle processes is low"
+        description: "Pod {{ $labels.pod }} has only {{ $value }} idle processes, may need to increase pm.max_children"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-low-idle"
+    
+    # 3. 達到最大子進程數告警（嚴重）
+    - alert: PhpFpmMaxChildrenReached
+      expr: rate(phpfpm_max_children_reached[5m]) > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM reached max children limit"
+        description: "Pod {{ $labels.pod }} is frequently reaching max children limit ({{ $value }} times/sec)"
+        action: "Increase pm.max_children in PHP-FPM configuration"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-max-children"
+    
+    # 4. 慢請求告警
+    - alert: PhpFpmSlowRequests
+      expr: rate(phpfpm_slow_requests[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM slow requests detected"
+        description: "Pod {{ $labels.pod }} has {{ $value }} slow requests/sec in the last 5 minutes"
+        action: "Check PHP application performance and slow query log"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-slow-requests"
+    
+    # 5. 請求隊列積壓告警
+    - alert: PhpFpmHighListenQueue
+      expr: phpfpm_listen_queue > 0
+      for: 2m
+      labels:
+        severity: warning
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM listen queue has backlog"
+        description: "Pod {{ $labels.pod }} has {{ $value }} requests in listen queue"
+        action: "Consider scaling up or increasing pm.max_children"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-queue"
+    
+    # 6. 進程利用率過高
+    - alert: PhpFpmHighProcessUtilization
+      expr: (phpfpm_active_processes / phpfpm_total_processes) * 100 > 80
+      for: 5m
+      labels:
+        severity: warning
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM process utilization is high"
+        description: "Pod {{ $labels.pod }} process utilization is {{ $value }}%"
+        action: "Consider increasing pm.max_children or scaling horizontally"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-utilization"
+
+  - name: php-fpm-performance
+    interval: 30s
+    rules:
+    # 7. 請求率下降（可能服務異常）
+    - alert: PhpFpmLowRequestRate
+      expr: rate(phpfpm_accepted_connections[5m]) < 0.1
+      for: 10m
+      labels:
+        severity: info
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM request rate is low"
+        description: "Pod {{ $labels.pod }} has very low request rate: {{ $value }} req/sec"
+        action: "Verify if this is expected or if there's an issue with upstream services"
+    
+    # 8. 請求率異常升高
+    - alert: PhpFpmHighRequestRate
+      expr: rate(phpfpm_accepted_connections[5m]) > 100
+      for: 5m
+      labels:
+        severity: info
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM request rate is unusually high"
+        description: "Pod {{ $labels.pod }} has high request rate: {{ $value }} req/sec"
+        action: "Monitor system resources and consider scaling"
+    
+    # 9. PHP-FPM 啟動時間過短（可能頻繁重啟）
+    - alert: PhpFpmFrequentRestarts
+      expr: time() - phpfpm_start_since < 300
+      for: 1m
+      labels:
+        severity: critical
+        component: php-fpm
+        team: backend
+      annotations:
+        summary: "PHP-FPM has recently restarted"
+        description: "Pod {{ $labels.pod }} was started {{ $value }}s ago"
+        action: "Check pod logs for crash reasons"
+        runbook_url: "https://wiki.example.com/runbooks/php-fpm-restarts"
+
+  - name: php-fpm-capacity
+    interval: 60s
+    rules:
+    # 10. 需要橫向擴展（基於平均負載）
+    - alert: PhpFpmNeedScaleOut
+      expr: avg(phpfpm_active_processes) by (namespace, cluster) > 12
+      for: 10m
+      labels:
+        severity: info
+        component: php-fpm
+        team: backend
+        action: scale-out
+      annotations:
+        summary: "PHP-FPM cluster needs horizontal scaling"
+        description: "Average active processes across all pods is {{ $value }}"
+        action: "Consider increasing replicas in deployment"
+    
+    # 11. 可以縮容（基於平均負載）
+    - alert: PhpFpmCanScaleIn
+      expr: avg(phpfpm_active_processes) by (namespace, cluster) < 2 and count(phpfpm_active_processes) by (namespace, cluster) > 2
+      for: 30m
+      labels:
+        severity: info
+        component: php-fpm
+        team: backend
+        action: scale-in
+      annotations:
+        summary: "PHP-FPM cluster can be scaled down"
+        description: "Average active processes is only {{ $value }}, consider reducing replicas"
+        action: "Evaluate if current pod count is necessary"

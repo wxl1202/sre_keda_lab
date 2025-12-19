@@ -1,0 +1,70 @@
+# AI生成
+# PodMonitor 配置 - 用於 Google Managed Prometheus (GMP)
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: nginx-php-fpm-monitor
+  labels:
+    app: nginx
+    # GMP 需要這個標籤來識別監控目標
+    app.kubernetes.io/name: nginx-php-fpm
+spec:
+  # 選擇要監控的 Pod
+  selector:
+    matchLabels:
+      app: nginx
+  
+  # 定義如何抓取指標
+  podMetricsEndpoints:
+  - port: prometheus  # 對應 Service 中的 port name
+    path: /metrics
+    interval: 30s     # 抓取間隔
+    scrapeTimeout: 10s
+    # GMP 特定配置
+    relabelings:
+    # 保留原始標籤
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_label_app]
+      targetLabel: app
+    # 添加自定義標籤
+    - targetLabel: job
+      replacement: php-fpm
+    - targetLabel: cluster
+      replacement: gke-cluster  # 根據實際集群名稱修改
+---
+# ServiceMonitor 配置（備選方案）
+# 如果 PodMonitor 不適用，可以使用 ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: php-fpm-metrics-monitor
+  labels:
+    app: nginx
+    # GMP 識別標籤
+    app.kubernetes.io/name: php-fpm-metrics
+spec:
+  # 選擇要監控的 Service
+  selector:
+    matchLabels:
+      app: nginx
+  
+  # 定義如何抓取指標
+  endpoints:
+  - port: prometheus  # 對應 Service 中的 port name
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    # GMP 特定配置
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_service_name]
+      targetLabel: service
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - targetLabel: job
+      replacement: php-fpm-metrics
+    - targetLabel: cluster
+      replacement: gke-cluster  # 根據實際集群名稱修改

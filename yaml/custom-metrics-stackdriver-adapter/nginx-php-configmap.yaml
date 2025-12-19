@@ -1,0 +1,137 @@
+# AI生成
+# Nginx 和 PHP-FPM 配置文件
+---
+# Nginx 配置 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  labels:
+    app: nginx
+data:
+  # Nginx 主配置文件
+  nginx.conf: |
+    user  nginx;
+    worker_processes  auto;
+    error_log  /var/log/nginx/error.log warn;
+    pid        /var/run/nginx.pid;
+    
+    events {
+        worker_connections  1024;
+    }
+    
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        
+        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                          '$status $body_bytes_sent "$http_referer" '
+                          '"$http_user_agent" "$http_x_forwarded_for"';
+        
+        access_log  /var/log/nginx/access.log  main;
+        
+        sendfile        on;
+        tcp_nopush      on;
+        keepalive_timeout  65;
+        gzip  on;
+        
+        include /etc/nginx/conf.d/*.conf;
+    }
+  
+  # PHP 站點配置
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /var/www/html;
+        index index.php index.html;
+        
+        # 日誌配置
+        access_log /var/log/nginx/access.log;
+        error_log /var/log/nginx/error.log;
+        
+        # PHP 文件處理
+        location ~ \.php$ {
+            try_files $uri =404;
+            fastcgi_split_path_info ^(.+\.php)(/.+)$;
+            # 透過 Unix Socket 連接 PHP-FPM
+            fastcgi_pass unix:/run/php/php-fpm.sock;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param PATH_INFO $fastcgi_path_info;
+        }
+        
+        # 靜態文件處理
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+        
+        # 拒絕訪問隱藏文件
+        location ~ /\. {
+            deny all;
+        }
+    }
+---
+# PHP-FPM 配置 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: php-fpm-config
+  labels:
+    app: nginx
+data:
+  # PHP-FPM pool 配置
+  www.conf: |
+    [www]
+    ; Unix socket 配置
+    listen = /run/php/php-fpm.sock
+    listen.owner = www-data
+    listen.group = www-data
+    listen.mode = 0666
+    
+    ; 進程管理配置
+    pm = dynamic
+    pm.max_children = 20
+    pm.start_servers = 5
+    pm.min_spare_servers = 5
+    pm.max_spare_servers = 10
+    pm.max_requests = 500
+    
+    ; 狀態頁面配置（供 exporter 使用）
+    pm.status_path = /fpm_status
+    ping.path = /fpm_ping
+    ping.response = pong
+    
+    ; 用戶和組（使用 PHP-FPM Alpine 映像的默認用戶）
+    user = www-data
+    group = www-data
+    
+    ; 捕獲 worker 輸出
+    catch_workers_output = yes
+    
+    ; 清除環境變數
+    clear_env = no
+  
+  # PHP 配置
+  php.ini: |
+    [PHP]
+    ; 基本設定
+    max_execution_time = 30
+    max_input_time = 60
+    memory_limit = 128M
+    
+    ; 錯誤報告
+    display_errors = Off
+    display_startup_errors = Off
+    log_errors = On
+    error_log = /var/log/php-fpm/error.log
+    
+    ; 文件上傳
+    file_uploads = On
+    upload_max_filesize = 10M
+    max_file_uploads = 20
+    post_max_size = 10M
+    
+    ; 時區設定
+    date.timezone = Asia/Taipei

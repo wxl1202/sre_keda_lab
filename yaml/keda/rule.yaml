@@ -1,0 +1,29 @@
+apiVersion: monitoring.googleapis.com/v1
+kind: Rules
+metadata:
+  name: php-fpm-recording-rules
+  namespace: default
+spec:
+  groups:
+  - name: php_fpm_process_calculations
+    # 評估這個規則群組中所有規則的頻率，例如每 15 秒計算一次
+    interval: 15s 
+    rules:
+    - record: job:phpfpm_process_utilization:ratio    # 指標名稱
+    # - record: phpfpm_process_utilization    # 指標名稱
+      # PromQL 運算式：
+      # 1. 取得活躍進程數。
+      # 2. 取得總進程數。
+      # 3. 執行比值計算，並乘以 100 得到百分比。
+      # 
+      # 注意：我使用了 `group_left` 的向量匹配操作來確保兩個指標能在標籤一致時正確相除。
+      expr: |
+        (
+          phpfpm_active_processes
+            / on(pod, namespace) group_left() 
+          phpfpm_total_processes
+        ) 
+        * 100
+      labels:
+        # 您可以添加自定義標籤來標識這個新指標，例如單位
+        unit: percent

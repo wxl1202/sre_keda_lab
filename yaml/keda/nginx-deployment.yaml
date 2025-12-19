@@ -1,0 +1,282 @@
+# AI生成
+# Nginx Deployment 配置文件
+# 此配置適用於 Google Kubernetes Engine (GKE)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  # 副本數量，可根據需求調整
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        # 使用官方 nginx 穩定版本
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        # 資源限制，適合 GKE 環境
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        # 健康檢查 - 存活探針
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # 健康檢查 - 就緒探針
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        # 掛載共享 volume 以與 php-fpm 通訊
+        volumeMounts:
+        - name: php-fpm-socket
+          mountPath: /run/php
+        # 掛載 nginx 配置
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        # 掛載測試 PHP 文件
+        - name: php-test-files
+          mountPath: /var/www/html
+      
+      # PHP-FPM 容器
+      - name: php-fpm
+        # 使用官方 PHP-FPM 映像
+        image: php:8.2-fpm-alpine
+        # 自定義啟動命令：先清理檔案再啟動 PHP-FPM
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "準備啟動 PHP-FPM..."
+          # 清理舊的 socket 和 pid 文件
+          rm -f /run/php/php-fpm.sock || true
+          rm -f /run/php/*.pid || true
+          # 刪除默認的 zz-docker.conf（它會覆蓋我們的配置，監聽 9000 而不是 socket）
+          rm -f /usr/local/etc/php-fpm.d/zz-docker.conf || true
+          echo "清理完成"
+          # 檢查配置文件
+          echo "檢查 PHP-FPM 配置..."
+          ls -la /usr/local/etc/php-fpm.d/
+          # 測試配置
+          php-fpm -t
+          echo "啟動 PHP-FPM"
+          # 啟動 PHP-FPM（前台運行）
+          php-fpm -F
+        ports:
+        - containerPort: 9000
+          name: php-fpm
+          protocol: TCP
+        # 資源限制
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+          limits:
+            memory: "256Mi"
+            cpu: "400m"
+        # 健康檢查 - 存活探針（檢查 socket 文件是否存在）
+        livenessProbe:
+          exec:
+            command:
+            - test
+            - -S
+            - /run/php/php-fpm.sock
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # 健康檢查 - 就緒探針（檢查 socket 文件）
+        readinessProbe:
+          exec:
+            command:
+            - test
+            - -S
+            - /run/php/php-fpm.sock
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        # 掛載共享 socket volume
+        volumeMounts:
+        - name: php-fpm-socket
+          mountPath: /run/php
+        # 掛載 PHP-FPM 配置
+        - name: php-fpm-config
+          mountPath: /usr/local/etc/php-fpm.d/www.conf
+          subPath: www.conf
+        - name: php-fpm-config
+          mountPath: /usr/local/etc/php/php.ini
+          subPath: php.ini
+        # 掛載測試 PHP 文件（共享 web root）
+        - name: php-test-files
+          mountPath: /var/www/html
+        # 環境變數配置（可選）
+        env:
+        - name: PHP_FPM_PM_MAX_CHILDREN
+          value: "20"
+        - name: PHP_FPM_PM_START_SERVERS
+          value: "5"
+        - name: PHP_FPM_PM_MIN_SPARE_SERVERS
+          value: "5"
+        - name: PHP_FPM_PM_MAX_SPARE_SERVERS
+          value: "10"
+      
+      # PHP-FPM Exporter 容器（用於 Prometheus 監控）
+      # (ref) https://github.com/hipages/php-fpm_exporter
+      - name: php-fpm-exporter
+        # 使用 php-fpm exporter 映像
+        image: hipages/php-fpm_exporter:2.0.3
+        ports:
+        - containerPort: 9253
+          name: prometheus
+          protocol: TCP
+        # 環境變數配置
+        env:
+        - name: PHP_FPM_WEB_LISTEN_ADDRESS
+          value: ":9253"
+        - name: PHP_FPM_SCRAPE_URI
+          value: "unix:///run/php/php-fpm.sock;/fpm_status"
+        - name: PHP_FPM_FIX_PROCESS_COUNT
+          value: "true"
+        # 資源限制
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "150m"
+        # 掛載共享 socket volume
+        volumeMounts:
+        - name: php-fpm-socket
+          mountPath: /run/php
+
+      # - name: prometheus-to-sd
+      #   image: gcr.io/google-containers/prometheus-to-sd:v0.9.0
+      #   ports:
+      #     - containerPort: 6060
+      #       protocol: TCP
+      #   command:
+      #     - /monitor
+      #     - --stackdriver-prefix=custom.googleapis.com
+      #     - --monitored-resource-type-prefix=k8s_
+      #     - --source=:http://localhost:9253
+      #     - --pod-id=$(POD_NAME)
+      #     - --namespace-id=$(POD_NAMESPACE)
+      #   resources:
+      #     requests:
+      #       cpu: 10m
+      #     limits:
+      #       cpu: 10m
+      #   env:
+      #     - name: POD_NAME
+      #       valueFrom:
+      #         fieldRef:
+      #           fieldPath: metadata.name
+      #     - name: POD_NAMESPACE
+      #       valueFrom:
+      #         fieldRef:
+      #           fieldPath: metadata.namespace
+      
+      # 定義共享 volume（emptyDir 用於容器間通訊）
+      volumes:
+      - name: php-fpm-socket
+        emptyDir: {}
+      # Nginx 配置 ConfigMap
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+      # PHP-FPM 配置 ConfigMap
+      - name: php-fpm-config
+        configMap:
+          name: php-fpm-config
+      # 測試 PHP 文件 ConfigMap
+      - name: php-test-files
+        configMap:
+          name: php-test-files
+---
+# Service 配置 - NodePort 類型（適合本機 K3s）
+# 如需 GKE LoadBalancer，將 type 改為 LoadBalancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  # annotations:
+  #   cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "poc-service-nginx-80-neg"}}}'
+  labels:
+    app: nginx
+spec:
+  # type: NodePort
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80
+    # nodePort: 30080
+    # protocol: TCP
+    # name: http
+  # GKE LoadBalancer 配置（本機 K3s 請註解）
+  # type: LoadBalancer
+  # annotations:
+  #   cloud.google.com/load-balancer-type: "Internal"  # 內部負載均衡器
+---
+# Service 配置 - Prometheus Metrics（用於監控）
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: php-fpm-metrics
+#   labels:
+#     app: nginx
+# spec:
+#   type: ClusterIP
+#   selector:
+#     app: nginx
+#   ports:
+#   - port: 9253
+#     targetPort: 9253
+#     protocol: TCP
+#     name: prometheus
+
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: "custom-metrics-exporter"
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  endpoints:
+  - port: 9253
+    path: /metrics
+    interval: 15s
