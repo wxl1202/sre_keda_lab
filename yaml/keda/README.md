@@ -70,8 +70,9 @@ phpfpm_max_active_processes{pool="www",scrape_uri="unix:///run/php/php-fpm.sock;
 phpfpm_total_processes{pool="www",scrape_uri="unix:///run/php/php-fpm.sock;/fpm_status"} 10
 ```
 
-## Pub/Sub 授權給 keda-operator
+## Pub/Sub 授權給 keda-operator （此方式 KEDA 不建議再使用）
 ```bash
+# !!!! 如果使用 prometheus 查詢 gcp metrics 則不需要此授權，僅 roles/monitoring.viewer 即可。
 export PROJECT_ID="gcp-poc-384805"
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format 'get(projectNumber)')
 
