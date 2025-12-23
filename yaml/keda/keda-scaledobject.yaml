@@ -104,7 +104,32 @@ spec:
       authenticationRef:
         kind: ClusterTriggerAuthentication
         name: google-workload-identity-auth
-  
+    
+    # 另一種寫法：使用內建 gcp-pubsub scaler，KEDA 建議不延用。
+    #   https://keda.sh/docs/2.18/scalers/gcp-pub-sub/
+    # - type: gcp-pubsub
+    #   authenticationRef:
+    #     name: google-workload-identity-auth
+    #     kind: ClusterTriggerAuthentication
+    #   metadata:
+    #     subscriptionName: "projects/gcp-poc-384805/subscriptions/keda-echo-read" # Required
+    #     mode: "SubscriptionSize"
+    #     value: "5"
+
+    - type: cron
+      metadata:
+        timezone: Asia/Taipei
+        start: 15 16 * * *
+        end: 20 16 * * *
+        desiredReplicas: "4"    
+
+    - type: cron
+      metadata:
+        timezone: Asia/Taipei
+        start: 35 16 * * *
+        end: 40 16 * * *
+        desiredReplicas: "5"
+
   # 進階選項：擴展行為設定（可選）
   advanced:
     # HPA 行為設定
