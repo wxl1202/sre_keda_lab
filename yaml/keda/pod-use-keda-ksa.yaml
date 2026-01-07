@@ -1,0 +1,72 @@
+# AI生成
+#
+# Pod 測試用範例：
+# - 建立於 `keda` namespace
+# - 使用 KEDA Operator 的 Kubernetes ServiceAccount（KSA）：`keda-operator`
+#
+# 使用情境：
+# - 驗證 Workload Identity / 權限綁定是否生效
+# - 在同一個 namespace 下，用指定 KSA 跑一個簡單 Pod 方便除錯
+#
+# 套用：
+#   kubectl apply -f ./yaml/keda/pod-use-keda-ksa.yaml
+# 查看：
+#   kubectl -n keda get pod keda-ksa-debug-pod -o wide
+# 進入：
+#   kubectl -n keda exec -it keda-ksa-debug-pod -- sh
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  # Pod 名稱
+  name: keda-ksa-debug-pod
+  # 指定建立於 keda namespace
+  namespace: keda
+  labels:
+    app: keda-ksa-debug
+spec:
+  # 指定此 Pod 使用的 Kubernetes ServiceAccount（KSA）
+  # 注意：此名稱需存在於同一個 namespace（keda）內
+  serviceAccountName: keda-operator
+
+  # 指定 Pod 排程到特定 Node Pool（GKE）
+  # GKE 會在 Node 上自動加上 label：cloud.google.com/gke-nodepool=<node-pool-name>
+  # 因此這裡用 nodeSelector 綁定到 `np-keda` 這個 node pool
+  nodeSelector:
+    cloud.google.com/gke-nodepool: np-keda
+
+  # 明確指定是否掛載 ServiceAccount token
+  # - Workload Identity/許多 K8s 驗證情境都需要 token
+  # - 預設為 true，這裡顯式寫出方便閱讀與除錯
+  automountServiceAccountToken: true
+
+  # 測試/除錯用途：不需重啟策略時可設為 Never
+  restartPolicy: Never
+
+  containers:
+    - name: debug
+      # 選用內建 curl 的映像：適合做 HTTP/HTTPS 連線與除錯
+      # 驗證方式：
+      # - 進入 Pod：kubectl -n keda exec -it keda-ksa-debug-pod -- sh
+      # - 測試 curl：curl -sS https://example.com | head
+      image: curlimages/curl
+      imagePullPolicy: IfNotPresent
+
+      # 讓 Pod 常駐，方便你 exec 進去檢查 token、DNS、連線等
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "[keda-ksa-debug] Pod started.";
+          echo "[keda-ksa-debug] ServiceAccount: keda-operator";
+          echo "[keda-ksa-debug] Namespace: keda";
+          echo "[keda-ksa-debug] Sleeping...";
+          sleep 3600;
+
+      # 資源請求/限制（最小化，避免佔用太多）
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "50m"
+          memory: "64Mi"

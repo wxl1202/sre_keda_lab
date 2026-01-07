@@ -10,7 +10,7 @@ metadata:
     app: nginx
 spec:
   # 副本數量，可根據需求調整
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: nginx
@@ -230,8 +230,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nginx-service
-  # annotations:
-  #   cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "poc-service-nginx-80-neg"}}}'
+  annotations:
+    cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "poc-service-nginx-80-neg"}}}'
   labels:
     app: nginx
 spec:

@@ -67,6 +67,11 @@ gcloud container node-pools update ${NODEPOOL_NAME} \
     --cluster=${CLUSTER_NAME} \
     --location=${INSTANCE_REGION} --project ${PROJECT_ID} \
     --workload-metadata=GKE_METADATA
+
+gcloud container node-pools update e2m-spot-pool \
+    --cluster=gke-lab-cluster \
+    --location=asia-east1 --project gcp-poc-384805 \
+    --workload-metadata=GKE_METADATA
 ```
 
 [從 GKE 工作負載向 Google Cloud API 驗證身分](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity?hl=zh-tw)

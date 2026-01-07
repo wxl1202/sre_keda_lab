@@ -1,6 +1,7 @@
 # AI生成
 apiVersion: keda.sh/v1alpha1
-kind: ClusterTriggerAuthentication
+# kind: ClusterTriggerAuthentication
+kind: TriggerAuthentication
 metadata:
   name: google-workload-identity-auth
 spec:
@@ -20,7 +21,7 @@ spec:
     name: nginx-deployment
   
   # 最小和最大的 Pod 副本數
-  minReplicaCount: 2
+  minReplicaCount: 1
   maxReplicaCount: 10
   
   # 冷卻期設定（可選）
@@ -47,7 +48,8 @@ spec:
         activationThreshold: "30"
         externalMetricName: php-fpm-process-utilization
       authenticationRef:
-        kind: ClusterTriggerAuthentication
+        # kind: ClusterTriggerAuthentication
+        kind: TriggerAuthentication
         name: google-workload-identity-auth
     
     # 觸發器 2: CPU 使用率
@@ -69,66 +71,67 @@ spec:
     # 重要：不同專案/環境回傳的 label key 可能略有差異。
     # 建議先用「不加 label 過濾」的 query 查一次，從回傳結果觀察有哪些 labels，
     # 再把 subscription 的 label（常見是 subscription_id）補上。
-    - type: prometheus
-      metadata:
-        # GCP Monitoring Prometheus API（同你現有觸發器 1）
-        serverAddress: https://monitoring.googleapis.com/v1/projects/gcp-poc-384805/location/global/prometheus
-        # backlog（未投遞訊息數）
-        #
-        # 為什麼要這樣寫（避免常拿到 0）：
-        # - Cloud Monitoring / GMP 的資料點通常有「匯入延遲」（ingestion lag），查「現在」可能會暫時看不到最新點。
-        # - 指標取樣頻率常見是 60s 等級，而 KEDA pollingInterval 可能更短，導致你在兩個資料點之間查詢，
-        #   max_over_time 視窗太短時容易取到 0 或空值（KEDA 常會當 0）。
-        #
-        # 對策：
-        # - 將 range 視窗加大到 5m（涵蓋更多資料點）
-        # - 加 offset 2m（刻意避開最新 1~2 分鐘的延遲區間）
-        #
-        # 可依環境調整：
-        # - 若仍常 0：把 [5m] 加到 [10m]，或把 offset 2m 加到 3m
-        # - 若希望更即時：把 offset 減小，但要接受偶發 0/空值的可能
-        query: |
-          sum(
-            max_over_time(
-              {"__name__"="pubsub.googleapis.com/subscription/num_undelivered_messages",
-              "monitored_resource"="pubsub_subscription",
-              "subscription_id"="keda-echo-read"}[5m] offset 2m
-            )
-          )
-        # threshold：backlog >= 此值時擴容（請依吞吐量調整）
-        #   threshold 代表單個 pod 的承載力，單個 pod 可處理的 backlog 數量，超過這個數值就開始擴容。
-        threshold: "5"
-        externalMetricName: pubsub-backlog
-        # activationThreshold：低於此值時不啟動 scaler（避免抖動）
-        # activationThreshold: "10"
-      authenticationRef:
-        kind: ClusterTriggerAuthentication
-        name: google-workload-identity-auth
+    # - type: prometheus
+    #   metadata:
+    #     # GCP Monitoring Prometheus API（同你現有觸發器 1）
+    #     serverAddress: https://monitoring.googleapis.com/v1/projects/gcp-poc-384805/location/global/prometheus
+    #     # backlog（未投遞訊息數）
+    #     #
+    #     # 為什麼要這樣寫（避免常拿到 0）：
+    #     # - Cloud Monitoring / GMP 的資料點通常有「匯入延遲」（ingestion lag），查「現在」可能會暫時看不到最新點。
+    #     # - 指標取樣頻率常見是 60s 等級，而 KEDA pollingInterval 可能更短，導致你在兩個資料點之間查詢，
+    #     #   max_over_time 視窗太短時容易取到 0 或空值（KEDA 常會當 0）。
+    #     #
+    #     # 對策：
+    #     # - 將 range 視窗加大到 5m（涵蓋更多資料點）
+    #     # - 加 offset 2m（刻意避開最新 1~2 分鐘的延遲區間）
+    #     #
+    #     # 可依環境調整：
+    #     # - 若仍常 0：把 [5m] 加到 [10m]，或把 offset 2m 加到 3m
+    #     # - 若希望更即時：把 offset 減小，但要接受偶發 0/空值的可能
+    #     query: |
+    #       sum(
+    #         max_over_time(
+    #           {"__name__"="pubsub.googleapis.com/subscription/num_undelivered_messages",
+    #           "monitored_resource"="pubsub_subscription",
+    #           "subscription_id"="keda-echo-read"}[5m] offset 2m
+    #         )
+    #       )
+    #     # threshold：backlog >= 此值時擴容（請依吞吐量調整）
+    #     #   threshold 代表單個 pod 的承載力，單個 pod 可處理的 backlog 數量，超過這個數值就開始擴容。
+    #     threshold: "5"
+    #     externalMetricName: pubsub-backlog
+    #     # activationThreshold：低於此值時不啟動 scaler（避免抖動）
+    #     # activationThreshold: "10"
+    #   authenticationRef:
+    #     # kind: ClusterTriggerAuthentication
+    #     kind: TriggerAuthentication
+    #     name: google-workload-identity-auth
     
     # 另一種寫法：使用內建 gcp-pubsub scaler，KEDA 建議不延用。
     #   https://keda.sh/docs/2.18/scalers/gcp-pub-sub/
-    # - type: gcp-pubsub
-    #   authenticationRef:
-    #     name: google-workload-identity-auth
-    #     kind: ClusterTriggerAuthentication
+    - type: gcp-pubsub
+      authenticationRef:
+        name: google-workload-identity-auth
+        kind: TriggerAuthentication
+      metadata:
+        subscriptionName: "projects/gcp-poc-384805/subscriptions/keda-echo-read" # Required
+        mode: "SubscriptionSize"
+        value: "5"
+
+    # - type: cron
     #   metadata:
-    #     subscriptionName: "projects/gcp-poc-384805/subscriptions/keda-echo-read" # Required
-    #     mode: "SubscriptionSize"
-    #     value: "5"
+    #     timezone: Asia/Taipei
+    #     start: 15 16 * * *
+    #     end: 20 16 * * *
+    #     desiredReplicas: "4"    
 
-    - type: cron
-      metadata:
-        timezone: Asia/Taipei
-        start: 15 16 * * *
-        end: 20 16 * * *
-        desiredReplicas: "4"    
-
-    - type: cron
-      metadata:
-        timezone: Asia/Taipei
-        start: 35 16 * * *
-        end: 40 16 * * *
-        desiredReplicas: "5"
+    # - type: cron
+    #   metadata:
+    #     timezone: Asia/Taipei
+    #     start: 35 16 * * *
+    #     end: 40 16 * * *
+    #     desiredReplicas: "5"
 
   # 進階選項：擴展行為設定（可選）
   advanced:
